@@ -13,7 +13,7 @@ x_train = x_train.astype('float32') / 255.0
 x_test = x_test.astype('float32') / 255.0
 
 # Convert the labels to one-hot encoded vectors
-y_train = to_categitgorical(y_train, 10)
+y_train = to_categorical(y_train, 10)
 y_test = to_categorical(y_test, 10)
 
 # Define the model
