@@ -1,14 +1,15 @@
 import tensorflow as tf
+import tensorflow_federated as tff
 from tensorflow.keras.datasets import cifar10
 from tensorflow.keras.utils import to_categorical
-from tensorflow.keras import layers
-from tensorflow.keras.layers import Dropout, BatchNormalization
+from tensorflow import float32
 import matplotlib.pyplot as plt
+import numpy as np
 
-#loading the data and split it into train set and test set
+# Load the CIFAR-10 dataset
 (x_train, y_train), (x_test, y_test) = cifar10.load_data()
 
-#normalize the inputs from 0-255 to between 0 and 1 dividing by 255
+# Normalize the pixel values to be between 0 and 1
 x_train = x_train.astype('float32') / 255.0
 x_test = x_test.astype('float32') / 255.0
 
@@ -17,55 +18,74 @@ y_train = to_categorical(y_train, 10)
 y_test = to_categorical(y_test, 10)
 
 # Define the model
-model = tf.keras.models.Sequential()
+def create_model():
+    model = tf.keras.models.Sequential()
+    model.add(tf.keras.layers.Conv2D(124, (3, 3), activation='relu', input_shape=(32, 32, 3)))
+    model.add(tf.keras.layers.MaxPooling2D((2, 2)))
+    model.add(tf.keras.layers.Conv2D(64, (3, 3), activation='relu'))
+    model.add(tf.keras.layers.MaxPooling2D((2, 2)))
+    model.add(tf.keras.layers.Flatten())
+    model.add(tf.keras.layers.Dense(64, activation='relu'))
+    model.add(tf.keras.layers.Dense(10, activation='softmax'))
+    return model
 
-# Convolutional Layer 1
-model.add(layers.Conv2D(32, (3, 3), activation='relu', input_shape=(32, 32, 3)))
-model.add(layers.MaxPooling2D((2, 2)))
+# Wrap the model in a tff.learning.Model
+def model_fn():
+    keras_model = create_model()
+    return tff.learning.models.from_keras_model(
+        keras_model,
+        input_spec=(tf.TensorSpec(shape=(None, 32, 32, 3), dtype=tf.float32), tf.TensorSpec(shape=(None, 10), dtype=tf.float32)),
+        loss=tf.keras.losses.CategoricalCrossentropy(),
+        metrics=[tf.keras.metrics.CategoricalAccuracy()])
 
-# Convolutional Layer 2
-model.add(layers.Conv2D(64, (3, 3), activation='relu'))
-model.add(layers.MaxPooling2D((2, 2)))
-model.add(Dropout(0.2))
-model.add(BatchNormalization())
+# Create a federated dataset
+def preprocess_fn(client_data):
+    return client_data['x'], client_data['y']
 
-# Convolutional Layer 3
-model.add(layers.Conv2D(64, (3, 3), activation='relu'))
-model.add(layers.MaxPooling2D((2, 2)))
-model.add(Dropout(0.2))
-model.add(BatchNormalization())
+@tff.tf_computation
+def make_federated_data(client_data):
+    x = client_data['x']
+    y = client_data['y']
+    
+    federated_data = [(x[i], y[i]) for i in range(len(x))]
+    return federated_data
 
-# Flatten the output of the convolutional layers
-model.add(layers.Flatten())
-model.add(Dropout(0.2))
 
-# Dense Layer 1
-model.add(layers.Dense(64, activation='relu'))
-model.add(Dropout(0.2))
-model.add(BatchNormalization())
 
-# Dense Layer 2
-model.add(layers.Dense(10, activation='softmax'))
-model.add(Dropout(0.2))
-model.add(BatchNormalization())
+train_data = {'x': x_train, 'y': y_train}
+test_data = {'x': x_test, 'y': y_test}
 
-# Compile the model
-model.compile(optimizer='adam',
-              loss='categorical_crossentropy',
-              metrics=['accuracy'])
+train_data = make_federated_data(train_data)
+test_data = make_federated_data(test_data)
 
-# Print the model summary
-model.summary()
+# Create a federated learning process
+iterative_process = tff.learning.algorithms.build_weighted_fed_avg(
+    model_fn,
+    client_optimizer_fn=lambda: tf.keras.optimizers.SGD(learning_rate=0.002),
+    server_optimizer_fn=lambda: tf.keras.optimizers.SGD(learning_rate=1.0))
 
-# Train the model
-history = model.fit(x_train, y_train, epochs=10, batch_size=64, validation_data=(x_test, y_test))
+# Run the federated learning process
+train_state = iterative_process.initialize()
+losses = []
+accuracies = []
+for _ in range(10):
+    train_state, metrics = iterative_process.next(train_state, train_data)
+    losses.append(metrics.loss)
+    accuracies.append(metrics.accuracy)
 
-# Plotting the learning curve
-plt.plot(history.history['accuracy'], label='accuracy')
-plt.plot(history.history['val_accuracy'], label='val_accuracy')
-plt.xlabel('Epoch')
+# Plot the learning graph
+plt.figure(figsize=(10, 5))
+plt.subplot(1, 2, 1)
+plt.plot(losses, marker='o')
+plt.title('Training Loss')
+plt.xlabel('Round')
+plt.ylabel('Loss')
+
+plt.subplot(1, 2, 2)
+plt.plot(accuracies, marker='o')
+plt.title('Training Accuracy')
+plt.xlabel('Round')
 plt.ylabel('Accuracy')
-plt.ylim([0, 1])
-plt.legend(loc='lower right')
-plt.savefig('learning_curve.png')  # Save the plot in the current directory
+
+plt.tight_layout()
 plt.show()
