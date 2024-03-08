@@ -1,0 +1,6 @@
+pip install python==3.12.2
+pip install tensorflow==2.16.0
+pip install matplotlib==3.8.0
+pip install --upgrade absl-py typing-extensions
+pip install --upgrade typing-extensions
+pip install --upgrade tensorflow-federated
